@@ -2,12 +2,13 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from nltk.tokenize import sent_tokenize
 import faiss
-
-# 安装 NLTK 并下载 punkt
+from sklearn.metrics.pairwise import cosine_similarity
+import json
+from tqdm import tqdm
 import nltk
 nltk.download('punkt')
 
-# 假设论文元数据
+
 paper_metadata = [
     {'title': 'Deep Learning Optimization', 'authors': ['Alice', 'Bob'], 'abstract': 'This paper explores optimization techniques for deep learning. These methods improve efficiency.'},
     {'title': 'Natural Language Processing', 'authors': ['Charlie'], 'abstract': 'An introduction to NLP using transformer models. This paper highlights key advancements.'},
@@ -16,31 +17,51 @@ paper_metadata = [
     {'title': 'Data Science Techniques', 'authors': ['Grace'], 'abstract': 'Exploring the world of data science. Covers statistics, machine learning, and big data.'}
 ]
 
-# 加载 Sentence-BERT 模型
+
 model = SentenceTransformer('all-MiniLM-L6-v2', device='cuda')
 
-# 生成句子嵌入并构建映射
 all_embeddings = []
 all_sentences = []
 metadata_index = []
+paper_metadata = []
 
-for i, paper in enumerate(paper_metadata):
-    sentences = sent_tokenize(paper['abstract'])  # 分句
-    embeddings = model.encode(sentences, show_progress_bar=False)  # 生成句子嵌入
 
-    all_embeddings.extend(embeddings)  # 扁平化嵌入
-    all_sentences.extend(sentences)  # 扁平化句子
-    metadata_index.extend([(i, j) for j in range(len(sentences))])  # 记录论文索引和句子索引
+input_file = '../arxiv-metadata-with-embeddings.json'
 
-# 转换为 numpy 数组
+print("Loading embeddings and metadata...")
+upbound = 10000
+with open(input_file, 'r') as f:
+    for i, line in enumerate(tqdm(f, desc="Processing JSONL")):
+        paper = json.loads(line)
+        if 'embeddings' in paper and 'sentences' in paper:
+            embeddings = np.array(paper['embeddings'], dtype='float32')
+            sentences = paper['sentences']
+            all_embeddings.extend(embeddings)
+            all_sentences.extend(sentences)
+            metadata_index.extend([(i, j) for j in range(len(sentences))])
+            paper_metadata.append({
+                'id': paper.get('id', ''),
+                'title': paper.get('title', 'Unknown'),
+                'authors': paper.get('authors', []),
+                'abstract': paper.get('abstract', ''),
+                'doi': paper.get('doi', ''),
+                'categories': paper.get('categories', []),
+                'journal-ref': paper.get('journal-ref', '')
+            })
+        if i == upbound:
+            break
+
+# print(paper_metadata[0])
+
+
 all_embeddings = np.array(all_embeddings).astype('float32')
 
-# 构建 FAISS 索引
+
 dimension = all_embeddings.shape[1]
 index_faiss = faiss.IndexFlatL2(dimension)
 index_faiss.add(all_embeddings)
 
-print(f"FAISS 索引已构建，包含 {index_faiss.ntotal} 个句子嵌入。")
+print(f"FAISS 建構完成，包含 {index_faiss.ntotal} 個 embeddings。")
 
 
 
@@ -58,27 +79,36 @@ def index():
 @app.route('/search', methods=['POST'])
 def search():
     query = request.json.get('query', '')
-    query_embedding = model.encode([query]).astype('float32')  # 查询嵌入
+    query_embedding = model.encode([query]).astype('float32')  
 
-    # 检索相关句子
+    # 使用 FAISS 進行最近鄰檢索
     k = 5
     distances, indices = index_faiss.search(query_embedding, k)
 
-    # 构造结果
     results = []
     for idx, distance in zip(indices[0], distances[0]):
-        paper_id, sentence_id = metadata_index[idx]  # 根据索引找到论文和句子
+        paper_id, sentence_id = metadata_index[idx]  # 根據索引找到對應的論文和句子
         paper = paper_metadata[paper_id]
-        sentence = all_sentences[idx]  # 从扁平化句子列表中取句子
+        sentence = all_sentences[idx]
+
+        # 生成 APA 格式引用
+        authors = ''.join(paper['authors'])
+        year = paper['journal-ref'][-4:] if paper.get('journal-ref') else 'Unknown'
+        apa_citation = f"{authors} ({year}). {paper['title']}. Retrieved from {paper['doi']}"
+
         results.append({
             'sentence': sentence,
             'title': paper['title'],
-            'authors': ', '.join(paper['authors']),
+            'authors': authors,
             'abstract': paper['abstract'],
-            'distance': round(float(distance), 4)
+            'relevance_score': round(float(1 / (1 + distance)), 4),  # 距離轉為相似度
+            'apa_citation': apa_citation,
+            'url': f"https://doi.org/{paper.get('doi', '')}"  # DOI URL
         })
 
     return jsonify(results)
+
+
 
 
 

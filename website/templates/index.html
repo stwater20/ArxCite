@@ -36,19 +36,53 @@
                             return;
                         }
 
-                        data.forEach(result => {
-                            $('#results').append(`
+                        data.forEach((result, index) => {
+                            const safeCitationId = `citation-${index}`;
+                            const card = $(`
                                 <div class="card mb-3">
                                     <div class="card-body">
                                         <h5 class="card-title">${result.title}</h5>
                                         <h6 class="card-subtitle mb-2 text-muted">Authors: ${result.authors}</h6>
                                         <p class="card-text"><strong>Matched Sentence:</strong> ${result.sentence}</p>
                                         <p class="card-text"><strong>Abstract:</strong> ${result.abstract}</p>
-                                        <p class="text-muted">Relevance Score: ${result.distance}</p>
+                                        <p class="text-muted">Relevance Score: ${result.relevance_score}</p>
+                                        <p>
+                                            <strong>APA Citation:</strong>
+                                            <span id="${safeCitationId}" class="citation">${result.apa_citation}</span>
+                                            <button class="btn btn-outline-secondary btn-sm copy-btn" data-citation-id="${safeCitationId}">Copy</button>
+                                        </p>
+                                        <a href="${result.url}" target="_blank" class="btn btn-primary btn-sm">View Paper</a>
                                     </div>
                                 </div>
                             `);
+
+                            $('#results').append(card);
                         });
+
+                        // 重新綁定複製按鈕事件
+                        $('.copy-btn').off('click').on('click', function () {
+                            const citationId = $(this).data('citation-id');
+                            const citationText = $(`#${citationId}`).text();
+
+                            if (!navigator.clipboard) {
+                                alert('Clipboard API not supported. Please copy manually.');
+                                return;
+                            }
+
+                            navigator.clipboard.writeText(citationText)
+                                .then(() => {
+                                    alert('Citation copied to clipboard!');
+                                })
+                                .catch((err) => {
+                                    console.error('Failed to copy citation: ', err);
+                                    alert('Failed to copy citation. Please try again.');
+                                });
+                        });
+
+                        // 觸發 MathJax 渲染
+                        if (window.MathJax) {
+                            MathJax.typesetPromise().catch((err) => console.error('MathJax rendering error:', err));
+                        }
                     },
                     error: function (xhr) {
                         console.error(xhr.responseText);
@@ -58,5 +92,6 @@
             });
         });
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </body>
 </html>
