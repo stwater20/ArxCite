@@ -29,7 +29,7 @@ paper_metadata = []
 input_file = '../arxiv-metadata-with-embeddings.json'
 
 print("Loading embeddings and metadata...")
-upbound = 10000
+upbound = 100000
 with open(input_file, 'r') as f:
     for i, line in enumerate(tqdm(f, desc="Processing JSONL")):
         paper = json.loads(line)
@@ -57,41 +57,39 @@ with open(input_file, 'r') as f:
 all_embeddings = np.array(all_embeddings).astype('float32')
 
 
+# 使用 FAISS 的 IndexFlatIP 索引
 dimension = all_embeddings.shape[1]
-index_faiss = faiss.IndexFlatL2(dimension)
+index_faiss = faiss.IndexFlatIP(dimension)
 index_faiss.add(all_embeddings)
 
-print(f"FAISS 建構完成，包含 {index_faiss.ntotal} 個 embeddings。")
+print(f"FAISS Index constructed with {index_faiss.ntotal} embeddings.")
 
-
-
+# 建立 Flask 應用
 from flask import Flask, request, jsonify, render_template
-import faiss
 
 app = Flask(__name__)
-
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-
 @app.route('/search', methods=['POST'])
 def search():
     query = request.json.get('query', '')
-    query_embedding = model.encode([query]).astype('float32')  
+    query_embedding = model.encode([query]).astype('float32')
+    faiss.normalize_L2(query_embedding)  # 標準化查詢嵌入
 
-    # 使用 FAISS 進行最近鄰檢索
+    # 使用 FAISS 進行檢索
     k = 5
     distances, indices = index_faiss.search(query_embedding, k)
 
     results = []
-    for idx, distance in zip(indices[0], distances[0]):
-        paper_id, sentence_id = metadata_index[idx]  # 根據索引找到對應的論文和句子
+    for idx, similarity in zip(indices[0], distances[0]):  # distances 直接為 Cosine Similarity
+        paper_id, sentence_id = metadata_index[idx]
         paper = paper_metadata[paper_id]
         sentence = all_sentences[idx]
 
-        # 生成 APA 格式引用
+        # 生成 APA 引用格式
         authors = ''.join(paper['authors'])
         year = paper['journal-ref'][-4:] if paper.get('journal-ref') else 'Unknown'
         apa_citation = f"{authors} ({year}). {paper['title']}. Retrieved from {paper['doi']}"
@@ -101,7 +99,7 @@ def search():
             'title': paper['title'],
             'authors': authors,
             'abstract': paper['abstract'],
-            'relevance_score': round(float(1 / (1 + distance)), 4),  # 距離轉為相似度
+            'relevance_score': round(float(similarity), 4),  # Cosine Similarity
             'apa_citation': apa_citation,
             'url': f"https://doi.org/{paper.get('doi', '')}"  # DOI URL
         })
